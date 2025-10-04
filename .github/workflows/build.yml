@@ -1,0 +1,57 @@
+name: Build W-Series Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'   # build saat ada tag versi, misal v1.0.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: |
+          pip install platformio
+
+      - name: Build firmware & FS
+        run: |
+          pio run -e esp32dev -t buildfs
+          pio run -e esp32dev -t build
+
+      - name: Merge artifacts
+        run: |
+          mkdir dist
+          python <<'PY'
+          import os
+          segs = [
+            ('.pio/build/esp32dev/bootloader.bin', 0x1000),
+            ('.pio/build/esp32dev/partitions.bin', 0x8000),
+            ('.pio/build/esp32dev/boot_app0.bin', 0xE000),
+            ('.pio/build/esp32dev/firmware.bin', 0x10000),
+            ('.pio/build/esp32dev/littlefs.bin', 0x310000),
+          ]
+          size = max(off+len(open(f,'rb').read()) for f,off in segs)
+          buf = bytearray(b'\xFF'*size)
+          for f,off in segs:
+              data=open(f,'rb').read()
+              buf[off:off+len(data)] = data
+          out='dist/merged.bin'
+          open(out,'wb').write(buf)
+          print(f'Merged -> {out}, size={len(buf)}')
+          PY
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/merged.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
